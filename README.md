@@ -32,9 +32,10 @@ docker build -t jira_sms_gateway .
 
 > Sample receptors.txt:
 > ```
-> 09121111111 
-> 09361234567 
-> 091812345678
+> Admin|John Lenon|09101234567
+> PMO|David Lenz|09111234567
+> Devops|Gary More|09121234567
+> Support|Kurt Cobain|09131234567
 > ```
 
 4. **Run the Docker Container:**
