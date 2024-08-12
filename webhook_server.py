@@ -1,6 +1,6 @@
-import os, json
+import os, json, requests
 from flask import Flask, request, jsonify
-from kavenegar import *
+from requests.exceptions import RequestException, Timeout, ConnectionError
 
 def read_file_and_store_contents(file_path):
     try:
@@ -26,7 +26,7 @@ def filter_records_by_receptors(records, receptors):
 
 
 records = read_file_and_store_contents(os.environ.get(os.environ['RECEPTOR_FILE_PATH'], 'receptors.txt'))
-receptors = ["PMO", "Admin"]
+receptors = []
 
 app = Flask(__name__)
 
@@ -36,39 +36,57 @@ def handle_webhook():
     # Print raw data
     data = request.json
     print ("Jira Json Data:\n", data)
-    #print ("Jira Json Data:\n",json.dumps(data, indent=4))
 
     # Extract data from the webhook payload
-    issue_user = data['user']['displayName']
-    issue_key = data['issue']['key']
-    issue_url = "https://pmo.vaslapp.com/browse/{}".format(issue_key)
-    issue_priority = data['issue']['fields']['priority']['name']
-    issue_assignee = data['issue']['fields']['assignee']['displayName']
-    issue_creator = data['issue']['fields']['creator']['displayName']
-    issue_reporter = data['issue']['fields']['reporter']['displayName']
-    issue_type = data['issue']['fields']['issuetype']['name']
-    issue_project_name = data['issue']['fields']['customfield_10503']['value']
-    issue_status = data['issue']['fields']['status']['name']
-    issue_summary = data['issue']['fields']['summary']
-    issue_description = data['issue']['fields']['description']
-    issue_department = data['issue']['fields']['customfield_10902']['value']
-    change_log_from = data['changelog']['items'][-1]['fromString']
-    change_log_to= data['changelog']['items'][-1]['toString']
+    issue_user = data.get('user', {}).get('displayName', 'Unknown User')
+    issue_key = data.get('issue', {}).get('key', 'Unknown Issue Key')
+
+    # Constructing URLs and other strings
+    if issue_key != 'Unknown Issue Key':
+        issue_url = "https://pmo.vaslapp.com/browse/{}".format(issue_key)
+
+    # Accessing nested fields safely
+    issue_priority = data.get('issue', {}).get('fields', {}).get('priority', {}).get('name', 'Unknown Priority')
+    issue_assignee = data.get('issue', {}).get('fields', {}).get('assignee', {}).get('displayName', 'No Assignee')
+    issue_creator = data.get('issue', {}).get('fields', {}).get('creator', {}).get('displayName', 'No Creator')
+    issue_reporter = data.get('issue', {}).get('fields', {}).get('reporter', {}).get('displayName', 'No Reporter')
+    issue_type = data.get('issue', {}).get('fields', {}).get('issuetype', {}).get('name', 'Unknown Type')
+    issue_project_name = data.get('issue', {}).get('fields', {}).get(f"customfield_{os.environ['ISSUE_PROJECT_NAME_FIELD_ID']}", {}).get('value', 'Unknown Project Name')
+    issue_status = data.get('issue', {}).get('fields', {}).get('status', {}).get('name', 'Unknown Status')
+    issue_summary = data.get('issue', {}).get('fields', {}).get('summary', 'No Summary')
+    issue_description = data.get('issue', {}).get('fields', {}).get('description', 'No Description')
+    issue_department = data.get('issue', {}).get('fields', {}).get(f"customfield_{os.environ['ISSUE_DEPARTMENT_FIELD_ID']}", {}).get('value', 'Error')
+
+    # Change log extraction
+    try:
+        change_log_from = data.get('changelog', {}).get('items', [{}])[0].get('fromString', 'Change Log Not Available')
+        change_log_to = data.get('changelog', {}).get('items', [{}])[-1].get('toString', 'Change Log Not Available')
+    except IndexError:
+        change_log_from = 'Change Log Not Available'
+        change_log_to = 'Change Log Not Available'
+
+    # Prepare the SMS message
+#    message = (
+#    f"Project Name: {issue_project_name}%0A"
+#    f"Department: {issue_department}%0A"
+#    f"Issue Key: {issue_key}%0A"
+#    f"Assignee: {issue_assignee}%0A"
+#    f"Reporter: {issue_reporter}%0A"
+#    f"Task moved from [{change_log_from}] to [{change_log_to}]%0A"
+#    f"Status: {issue_status}%0A"
+#    f"Summary: {issue_summary}%0A"
+#    f"Description: {issue_description}"
+#)
 
     # Prepare the SMS message
     message = (
-    f"Assignee: {issue_assignee}\n"
-    f"Reporter: {issue_reporter}\n"
-    f"Department: {issue_department}\n"
-    f"Project Name: {issue_project_name}\n"
-    f"Summary: {issue_summary}\n"
-    f"Task moved from [{change_log_from}] to [{change_log_to}]\n"
-    f"Issue Type: {issue_type}\n"
-    f"Issue Key: {issue_key}\n"
-    f"Priority: {issue_priority}\n"
-    f"Created By: {issue_creator}\n"
-    f"Status: {issue_status}\n"
-    f"Description: {issue_description}\n"
+    f"Project Name: {issue_project_name}%0A"
+    f"Department: {issue_department}%0A"
+    f"Issue Key: {issue_key}%0A"
+    f"Assignee: {issue_assignee}%0A"
+    f"Reporter: {issue_reporter}%0A"
+    f"Status: {issue_status}%0A"
+    f"Summary: {issue_summary}"
 )
 
     #print ("Message Format:\n",message)
@@ -77,28 +95,32 @@ def handle_webhook():
     #print("receptor list is: ",tmp_receptors)
     filtered_records = filter_records_by_receptors(records, tmp_receptors)
 
-   # Send SMS using Kavenegar API
-    try:
-        api = KavenegarAPI(os.environ['KAVENEGAR_API_KEY'])
-        for record in filtered_records:
-            number = record['phone_number']
-            #message_1 = message + "\nGroup: {}".format(record['department'])
-            params = {
-                'receptor': number,
-                'message': message
-            }
-            response = api.sms_send(params)
-            print(f"SMS sent to {number}: {str(response)}")
-        return jsonify({"message": "SMS sent successfully to all filtered receptors"}), 200
-    except APIException as e:
-        print(str(e))
-        return jsonify({"error": "Failed to send SMS", "details": str(e)}), 500
-    except HTTPException as e:
-        print(str(e))
-        return jsonify({"error": "Failed to send SMS", "details": str(e)}), 500
-    except FileNotFoundError:
-        print(f"Receptor file not found: {receptor_file_path}")
-        return jsonify({"error": "Receptor file not found"}), 500
+    # Variables
+    url = os.environ['SMS_ONLINE_URL']
+    username = os.environ['SMS_ONLINE_USERNAME']
+    password = os.environ['SMS_ONLINE_PASSWORD']
+    from_number = os.environ['SMS_ONLINE_NUMBER']
+
+    for record in filtered_records:
+
+        number = record['phone_number']
+        params = {
+            "from": from_number,
+            "to": number,
+            "text": message,
+            "password": password,
+            "username": username
+        }
+        print(f"params: {params}")
+        response = requests.get(url, params=params, timeout=5)
+        print(f"SMS sent to {number}: {str(response)}")
+        # Raise an exception if the request was unsuccessful
+        #response.raise_for_status()
+        response.raise_for_status()  # Raises an HTTPError for bad responses
+    return jsonify({"message": "SMS sent successfully to all filtered receptors"}), 200
+
 
 if __name__ == '__main__':
     app.run(port=5000)
+
+
