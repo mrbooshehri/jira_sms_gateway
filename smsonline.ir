@@ -1,0 +1,10 @@
+#! /bin/bash
+
+USERNAME=50001515
+PASSWORD=102092088
+TEXT="Test for mohammad"
+FROM=50001515
+TO=09361456697
+
+curl -X POST http://smsonline.ir/url/post/SendSMS.ashx?from=$FROM&to=$TO&text=$TEXT&password=$PASSWORD&username=$USERNAME
+
